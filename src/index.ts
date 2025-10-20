@@ -1,7 +1,6 @@
 //Need to separate patients by assessment and data quality:
 // high_risk_patients: string[], fever_patients: string[], data_quality_issues: string[];
 
-//First, make data model
 interface Patient {
   patient_id: string; //this is what will be passed to arrays
   name: string; //"Lastname, Firstname"
@@ -22,19 +21,58 @@ const bloodPressureRisk = {
 };
 
 //function to fetch patient data from database
-async function fetchPatientData(): Promise<Patient[]> {
-  const response = await fetch(
-    "https://assessment.ksensetech.com/api/patients?page=1&limit=10",
-    {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": "ak_5f8478cac08561fbd4cefe026d93a13147ccbb5742f057c8",
-      },
+async function fetchPatientData(maxRetries = 3): Promise<Patient[]> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(
+        "https://assessment.ksensetech.com/api/patients?page=1&limit=20",
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": "ak_5f8478cac08561fbd4cefe026d93a13147ccbb5742f057c8",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `HTTP error! status: ${response.status} - ${response.statusText}`
+        );
+      }
+
+      const patients: Patient[] = await response
+        .json()
+        .then((data) => data.data);
+      console.log(`Fetched ${patients.length} patients successfully.`);
+      return patients;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      if (attempt === maxRetries - 1) {
+        throw new Error(
+          `Failed after ${maxRetries} attempts: ${lastError.message}`
+        );
+      }
+
+      console.error(
+        `Attempt ${attempt} to fetch patient data failed:`,
+        lastError.message
+      );
+
+      const waitTime = Math.pow(2, attempt) * 1000;
+      console.warn(
+        `Attempt ${attempt + 1} failed. Retrying in ${waitTime}ms...`
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
     }
+  }
+  throw (
+    lastError || new Error("Failed to fetch patient data after all retries")
   );
-  const patients: Patient[] = await response.json().then((data) => data.data);
-  return patients;
 }
 
 const determineSystolicRisk = (systolic: number): number => {
@@ -80,11 +118,8 @@ type BadData = "bad_data";
 
 //function to assess bp level
 
-function assessBloodPressure(
-  patientId: string,
-  bp: string | null | undefined
-): number | BadData {
-  if (bp == null) {
+function assessBloodPressure(bp: string | null | undefined): number | BadData {
+  if (bp == null || typeof bp !== "string") {
     return "bad_data";
   }
   const [systolicStr, diastolicStr] = bp.split("/");
@@ -113,8 +148,13 @@ const feverRisk = {
 };
 
 //function to assess fever
-function assessFever(temperature: number): number | BadData {
-  if (temperature == null || isNaN(temperature)) {
+function assessFever(temperature: number | null | undefined): number | BadData {
+  //does not catch booleans
+  if (
+    temperature == null ||
+    isNaN(temperature) ||
+    typeof temperature === "boolean"
+  ) {
     return "bad_data";
   }
 
@@ -129,15 +169,40 @@ function assessFever(temperature: number): number | BadData {
 }
 
 //function to assess age risk
+const ageRisk = {
+  underForty: 0,
+  fortyToSixtyFive: 1,
+  overSixtyFive: 2,
+};
 
-//function to check data quality
+function assessAgeRisk(age: number | null | undefined): number | BadData {
+  if (age == null || isNaN(age) || typeof age === "boolean") {
+    return "bad_data";
+  }
+
+  switch (true) {
+    case age < 40:
+      return ageRisk.underForty;
+    case age >= 40 && age <= 65:
+      return ageRisk.fortyToSixtyFive;
+    default:
+      return ageRisk.overSixtyFive;
+  }
+}
+
+const combineRisks = (bpRisk: number, feverRisk: number, ageRisk: number) =>
+  bpRisk + feverRisk + ageRisk;
 
 async function main() {
   //TODO uncomment after testing
-  // let patients: Patient[] = await fetchPatientData();
+  let patients: Patient[] = await fetchPatientData();
+
+  const high_risk_patients: string[] = [];
+  const fever_patients: string[] = [];
+  const data_quality_issues: string[] = [];
 
   //TODO: remove this if statement after testing
-  let patients: Patient[] = [
+  /*let patients: Patient[] = [
     {
       patient_id: "test123",
       name: "Doe, John",
@@ -149,23 +214,70 @@ async function main() {
       diagnosis: "Hypertension",
       medications: "Lisinopril 10mg daily",
     },
-  ];
+    {
+      patient_id: "test456",
+      name: "Smith, Jane",
+      age: 70,
+      gender: "Female",
+      blood_pressure: "130/85",
+      temperature: 101.2,
+      visit_date: new Date("2023-04-02"),
+      diagnosis: "Influenza",
+      medications: "Acetaminophen 650mg every 6 hours as needed",
+    },
+  ];*/
 
   if (!patients || patients.length === 0 || !patients[0]) {
     console.log("No patient data found.");
     return;
   }
-  console.log("Blood pressure of first patient:", patients[0]?.blood_pressure);
-  console.log(
-    "Assessment of first patient:",
-    assessBloodPressure(patients[0].patient_id, patients[0]?.blood_pressure)
-  );
 
-  console.log(
-    "Fever of first patient:",
-    patients[0]?.temperature,
-    assessFever(patients[0].temperature)
-  );
+  for (let i = 0; i < patients.length; i++) {
+    const patient = patients[i];
+    if (!patient) continue;
+
+    let patientBpRisk = assessBloodPressure(patient.blood_pressure);
+    let patientFeverRisk = assessFever(patient.temperature);
+    let patientAgeRisk = assessAgeRisk(patient.age);
+
+    if (
+      (patientBpRisk === "bad_data" ||
+        patientFeverRisk === "bad_data" ||
+        patientAgeRisk === "bad_data") &&
+      !data_quality_issues.includes(patient.patient_id)
+    ) {
+      data_quality_issues.push(patient.patient_id);
+      continue;
+    }
+
+    let patientRiskScore = combineRisks(
+      patientBpRisk as number,
+      patientFeverRisk as number,
+      patientAgeRisk as number
+    );
+
+    if (
+      patientRiskScore >= 4 &&
+      !high_risk_patients.includes(patient.patient_id)
+    ) {
+      high_risk_patients.push(patient.patient_id);
+    }
+
+    if (
+      (patientFeverRisk as number) >= feverRisk.lowFever &&
+      !fever_patients.includes(patient.patient_id)
+    ) {
+      fever_patients.push(patient.patient_id);
+    }
+  }
+
+  if (!patients || patients.length === 0 || !patients[0]) {
+    console.log("No patient data found.");
+    return;
+  }
+  console.log("High Risk Patients:", high_risk_patients);
+  console.log("Fever Patients:", fever_patients);
+  console.log("Data Quality Issues:", data_quality_issues);
 }
 
 main().catch(console.error);
