@@ -21,6 +21,22 @@ const bloodPressureRisk = {
   stageTwo: 3,
 };
 
+//function to fetch patient data from database
+async function fetchPatientData(): Promise<Patient[]> {
+  const response = await fetch(
+    "https://assessment.ksensetech.com/api/patients?page=1&limit=10",
+    {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "ak_5f8478cac08561fbd4cefe026d93a13147ccbb5742f057c8",
+      },
+    }
+  );
+  const patients: Patient[] = await response.json().then((data) => data.data);
+  return patients;
+}
+
 const determineSystolicRisk = (systolic: number): number => {
   let riskLevel = 0;
   switch (true) {
@@ -60,54 +76,59 @@ const determineDiastolicRisk = (diastolic: number): number => {
   return riskLevel;
 };
 
-//function to fetch patient data from database
-async function fetchPatientData(): Promise<Patient[]> {
-  const response = await fetch(
-    "https://assessment.ksensetech.com/api/patients?page=1&limit=10",
-    {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": "ak_5f8478cac08561fbd4cefe026d93a13147ccbb5742f057c8",
-      },
-    }
-  );
-  const patients: Patient[] = await response.json().then((data) => data.data);
-  return patients;
-}
+type BadData = "bad_data";
 
 //function to assess bp level
 
 function assessBloodPressure(
   patientId: string,
   bp: string | null | undefined
-): number {
+): number | BadData {
   if (bp == null) {
-    //TODO: add patientId to data quality issues array
-    return 0; // No blood pressure data
+    return "bad_data";
   }
   const [systolicStr, diastolicStr] = bp.split("/");
 
   if (!systolicStr || !diastolicStr) {
-    //TODO: add patientId to data quality issues array
-    return 0; // Invalid blood pressure format
+    return "bad_data";
   }
 
   const systolic = parseInt(systolicStr, 10);
   const diastolic = parseInt(diastolicStr, 10);
 
   if (isNaN(systolic) || isNaN(diastolic)) {
-    //TODO: add patientId to data quality issues array
-    return 0; // Invalid blood pressure values
+    return "bad_data";
   }
 
-  let systolicRisk = determineSystolicRisk(systolic);
-  let diastolicRisk = determineDiastolicRisk(diastolic);
+  const systolicRisk = determineSystolicRisk(systolic);
+  const diastolicRisk = determineDiastolicRisk(diastolic);
 
   return Math.max(systolicRisk, diastolicRisk);
 }
 
+const feverRisk = {
+  normal: 0,
+  lowFever: 1,
+  highFever: 2,
+};
+
 //function to assess fever
+function assessFever(temperature: number): number | BadData {
+  if (temperature == null || isNaN(temperature)) {
+    return "bad_data";
+  }
+
+  switch (true) {
+    case temperature <= 99.5:
+      return feverRisk.normal;
+    case temperature >= 99.6 && temperature <= 100.9:
+      return feverRisk.lowFever;
+    default:
+      return feverRisk.highFever;
+  }
+}
+
+//function to assess age risk
 
 //function to check data quality
 
@@ -138,6 +159,12 @@ async function main() {
   console.log(
     "Assessment of first patient:",
     assessBloodPressure(patients[0].patient_id, patients[0]?.blood_pressure)
+  );
+
+  console.log(
+    "Fever of first patient:",
+    patients[0]?.temperature,
+    assessFever(patients[0].temperature)
   );
 }
 
