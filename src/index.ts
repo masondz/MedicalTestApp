@@ -1,6 +1,4 @@
-//Need to separate patients by assessment and data quality:
-// high_risk_patients: string[], fever_patients: string[], data_quality_issues: string[];
-
+//Define patient interface
 interface Patient {
   patient_id: string; //this is what will be passed to arrays
   name: string; //"Lastname, Firstname"
@@ -18,14 +16,15 @@ type BadData = "bad_data";
 //function to fetch patient data from database
 async function fetchPatientData(
   maxRetries = 3,
-  page: number
+  page: number,
+  limit = 20
 ): Promise<Patient[]> {
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await fetch(
-        `https://assessment.ksensetech.com/api/patients?page=${page}&limit=15`,
+        `https://assessment.ksensetech.com/api/patients?page=${page}&limit=${limit}`,
         {
           method: "GET",
           headers: {
@@ -80,12 +79,16 @@ async function fetchPatientData(
 async function navigateApiPages(maxRetries: number): Promise<Patient[]> {
   let allPatients: Patient[] = [];
   let page = 1;
+  let limit = 20;
   while (true) {
-    const patients = await fetchPatientData(maxRetries, page);
+    const patients = await fetchPatientData(maxRetries, page, limit);
     if (patients.length === 0) {
       break;
     }
     allPatients.push(...patients);
+    if (patients.length < limit) {
+      break;
+    }
     page++;
   }
   return allPatients;
@@ -209,10 +212,15 @@ function assessAgeRisk(age: number | null | undefined): number | BadData {
   }
 }
 
-const combineRisks = (bpRisk: number, feverRisk: number, ageRisk: number) =>
-  bpRisk + feverRisk + ageRisk;
+const combineRisks = (...risks: (number | BadData)[]): number => {
+  return risks.reduce(
+    (sum: number, risk) => (typeof risk === "number" ? sum + risk : sum),
+    0
+  );
+};
 
 async function main() {
+  //TODO: try looking at all of patients data before fixing
   let patients: Patient[] = await navigateApiPages(5);
 
   const high_risk_patients: string[] = [];
@@ -239,16 +247,16 @@ async function main() {
       !data_quality_issues.includes(patient.patient_id)
     ) {
       data_quality_issues.push(patient.patient_id);
-      continue;
     }
 
     let patientRiskScore = combineRisks(
-      patientBpRisk as number,
-      patientFeverRisk as number,
-      patientAgeRisk as number
+      patientBpRisk,
+      patientFeverRisk,
+      patientAgeRisk
     );
 
     if (
+      typeof patientRiskScore === "number" &&
       patientRiskScore >= 4 &&
       !high_risk_patients.includes(patient.patient_id)
     ) {
@@ -274,6 +282,7 @@ async function main() {
     data_quality_issues
   );
   console.log("Total Patients Processed:", patients.length);
+
   console.log("Attempting to POST results...");
 
   const results = {
