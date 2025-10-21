@@ -13,21 +13,19 @@ interface Patient {
   medications: string;
 }
 
-const bloodPressureRisk = {
-  normal: 0,
-  elevated: 1,
-  stageOne: 2,
-  stageTwo: 3,
-};
+type BadData = "bad_data";
 
 //function to fetch patient data from database
-async function fetchPatientData(maxRetries = 3): Promise<Patient[]> {
+async function fetchPatientData(
+  maxRetries = 3,
+  page: number
+): Promise<Patient[]> {
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await fetch(
-        "https://assessment.ksensetech.com/api/patients?page=1&limit=20",
+        `https://assessment.ksensetech.com/api/patients?page=${page}&limit=15`,
         {
           method: "GET",
           headers: {
@@ -36,17 +34,20 @@ async function fetchPatientData(maxRetries = 3): Promise<Patient[]> {
           },
         }
       );
-
       if (!response.ok) {
         throw new Error(
           `HTTP error! status: ${response.status} - ${response.statusText}`
         );
       }
-
       const patients: Patient[] = await response
         .json()
         .then((data) => data.data);
-      console.log(`Fetched ${patients.length} patients successfully.`);
+
+      if (patients.length === 0) {
+        console.log("No patient data found.");
+      } else {
+        console.log(`Fetched ${patients.length} patients successfully.`);
+      }
       return patients;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
@@ -75,48 +76,28 @@ async function fetchPatientData(maxRetries = 3): Promise<Patient[]> {
   );
 }
 
-const determineSystolicRisk = (systolic: number): number => {
-  let riskLevel = 0;
-  switch (true) {
-    case systolic < 120:
-      riskLevel = bloodPressureRisk.normal;
+//Function to navigate api pages until no more data is returned
+async function navigateApiPages(maxRetries: number): Promise<Patient[]> {
+  let allPatients: Patient[] = [];
+  let page = 1;
+  while (true) {
+    const patients = await fetchPatientData(maxRetries, page);
+    if (patients.length === 0) {
       break;
-    case systolic >= 120 && systolic < 130:
-      riskLevel = bloodPressureRisk.elevated;
-      break;
-    case systolic >= 130 && systolic < 140:
-      riskLevel = bloodPressureRisk.stageOne;
-      break;
-    case systolic >= 140:
-      riskLevel = bloodPressureRisk.stageTwo;
-      break;
-    default:
-      riskLevel = 0;
+    }
+    allPatients.push(...patients);
+    page++;
   }
-  return riskLevel;
-};
-
-const determineDiastolicRisk = (diastolic: number): number => {
-  let riskLevel = 0;
-  switch (true) {
-    case diastolic < 80:
-      riskLevel = bloodPressureRisk.normal;
-      break;
-    case diastolic >= 80 && diastolic < 90:
-      riskLevel = bloodPressureRisk.stageOne;
-      break;
-    case diastolic >= 90:
-      riskLevel = bloodPressureRisk.stageTwo;
-      break;
-    default:
-      riskLevel = 0;
-  }
-  return riskLevel;
-};
-
-type BadData = "bad_data";
+  return allPatients;
+}
 
 //function to assess bp level
+enum BloodPressureRisk {
+  normal = 0,
+  elevated = 1,
+  stageOne = 2,
+  stageTwo = 3,
+}
 
 function assessBloodPressure(bp: string | null | undefined): number | BadData {
   if (bp == null || typeof bp !== "string") {
@@ -141,15 +122,53 @@ function assessBloodPressure(bp: string | null | undefined): number | BadData {
   return Math.max(systolicRisk, diastolicRisk);
 }
 
-const feverRisk = {
-  normal: 0,
-  lowFever: 1,
-  highFever: 2,
+const determineSystolicRisk = (systolic: number): number => {
+  let riskLevel = 0;
+  switch (true) {
+    case systolic < 120:
+      riskLevel = BloodPressureRisk.normal;
+      break;
+    case systolic >= 120 && systolic < 130:
+      riskLevel = BloodPressureRisk.elevated;
+      break;
+    case systolic >= 130 && systolic < 140:
+      riskLevel = BloodPressureRisk.stageOne;
+      break;
+    case systolic >= 140:
+      riskLevel = BloodPressureRisk.stageTwo;
+      break;
+    default:
+      riskLevel = 0;
+  }
+  return riskLevel;
+};
+
+const determineDiastolicRisk = (diastolic: number): number => {
+  let riskLevel = 0;
+  switch (true) {
+    case diastolic < 80:
+      riskLevel = BloodPressureRisk.normal;
+      break;
+    case diastolic >= 80 && diastolic < 90:
+      riskLevel = BloodPressureRisk.stageOne;
+      break;
+    case diastolic >= 90:
+      riskLevel = BloodPressureRisk.stageTwo;
+      break;
+    default:
+      riskLevel = 0;
+  }
+  return riskLevel;
 };
 
 //function to assess fever
+enum FeverRisk {
+  normal = 0,
+  lowFever = 1,
+  highFever = 2,
+}
+
 function assessFever(temperature: number | null | undefined): number | BadData {
-  //does not catch booleans
   if (
     temperature == null ||
     isNaN(temperature) ||
@@ -160,20 +179,20 @@ function assessFever(temperature: number | null | undefined): number | BadData {
 
   switch (true) {
     case temperature <= 99.5:
-      return feverRisk.normal;
+      return FeverRisk.normal;
     case temperature >= 99.6 && temperature <= 100.9:
-      return feverRisk.lowFever;
+      return FeverRisk.lowFever;
     default:
-      return feverRisk.highFever;
+      return FeverRisk.highFever;
   }
 }
 
 //function to assess age risk
-const ageRisk = {
-  underForty: 0,
-  fortyToSixtyFive: 1,
-  overSixtyFive: 2,
-};
+enum AgeRisk {
+  underForty = 0,
+  fortyToSixtyFive = 1,
+  overSixtyFive = 2,
+}
 
 function assessAgeRisk(age: number | null | undefined): number | BadData {
   if (age == null || isNaN(age) || typeof age === "boolean") {
@@ -182,11 +201,11 @@ function assessAgeRisk(age: number | null | undefined): number | BadData {
 
   switch (true) {
     case age < 40:
-      return ageRisk.underForty;
+      return AgeRisk.underForty;
     case age >= 40 && age <= 65:
-      return ageRisk.fortyToSixtyFive;
+      return AgeRisk.fortyToSixtyFive;
     default:
-      return ageRisk.overSixtyFive;
+      return AgeRisk.overSixtyFive;
   }
 }
 
@@ -194,38 +213,11 @@ const combineRisks = (bpRisk: number, feverRisk: number, ageRisk: number) =>
   bpRisk + feverRisk + ageRisk;
 
 async function main() {
-  //TODO uncomment after testing
-  let patients: Patient[] = await fetchPatientData();
+  let patients: Patient[] = await navigateApiPages(5);
 
   const high_risk_patients: string[] = [];
   const fever_patients: string[] = [];
   const data_quality_issues: string[] = [];
-
-  //TODO: remove this if statement after testing
-  /*let patients: Patient[] = [
-    {
-      patient_id: "test123",
-      name: "Doe, John",
-      age: 45,
-      gender: "Male",
-      blood_pressure: "121/79",
-      temperature: 98.6,
-      visit_date: new Date("2023-04-01"),
-      diagnosis: "Hypertension",
-      medications: "Lisinopril 10mg daily",
-    },
-    {
-      patient_id: "test456",
-      name: "Smith, Jane",
-      age: 70,
-      gender: "Female",
-      blood_pressure: "130/85",
-      temperature: 101.2,
-      visit_date: new Date("2023-04-02"),
-      diagnosis: "Influenza",
-      medications: "Acetaminophen 650mg every 6 hours as needed",
-    },
-  ];*/
 
   if (!patients || patients.length === 0 || !patients[0]) {
     console.log("No patient data found.");
@@ -264,20 +256,51 @@ async function main() {
     }
 
     if (
-      (patientFeverRisk as number) >= feverRisk.lowFever &&
+      (patientFeverRisk as number) >= FeverRisk.lowFever &&
       !fever_patients.includes(patient.patient_id)
     ) {
       fever_patients.push(patient.patient_id);
     }
   }
 
-  if (!patients || patients.length === 0 || !patients[0]) {
-    console.log("No patient data found.");
-    return;
+  console.log("Showing sorted patient data:");
+  console.log(
+    `High Risk Patients (${high_risk_patients.length}):`,
+    high_risk_patients
+  );
+  console.log(`Fever Patients (${fever_patients.length}):`, fever_patients);
+  console.log(
+    `Data Quality Issues (${data_quality_issues.length}):`,
+    data_quality_issues
+  );
+  console.log("Total Patients Processed:", patients.length);
+  console.log("Attempting to POST results...");
+
+  const results = {
+    high_risk_patients: high_risk_patients,
+    fever_patients: fever_patients,
+    data_quality_issues: data_quality_issues,
+  };
+
+  try {
+    const response = await fetch(
+      "https://assessment.ksensetech.com/api/submit-assessment",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "ak_5f8478cac08561fbd4cefe026d93a13147ccbb5742f057c8",
+        },
+        body: JSON.stringify(results),
+      }
+    ).then((response) => response.json());
+
+    console.log("Assessment Results:", response);
+    console.log("Feedback Strengths:", response.results.feedback.strengths);
+    console.log("Feedback issues:", response.results.feedback.issues);
+  } catch (error) {
+    console.error("Error POSTing results:", error);
   }
-  console.log("High Risk Patients:", high_risk_patients);
-  console.log("Fever Patients:", fever_patients);
-  console.log("Data Quality Issues:", data_quality_issues);
 }
 
 main().catch(console.error);
