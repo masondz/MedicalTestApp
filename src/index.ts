@@ -94,7 +94,7 @@ async function navigateApiPages(maxRetries: number): Promise<Patient[]> {
   return allPatients;
 }
 
-//function to assess bp level
+//Assess Blood Pressure Risk
 enum BloodPressureRisk {
   normal = 0,
   elevated = 1,
@@ -164,7 +164,7 @@ const determineDiastolicRisk = (diastolic: number): number => {
   return riskLevel;
 };
 
-//function to assess fever
+//Assess Fever Risk
 enum FeverRisk {
   normal = 0,
   lowFever = 1,
@@ -190,7 +190,7 @@ function assessFever(temperature: number | null | undefined): number | BadData {
   }
 }
 
-//function to assess age risk
+//Assess Age Risk
 enum AgeRisk {
   underForty = 0,
   fortyToSixtyFive = 1,
@@ -212,6 +212,7 @@ function assessAgeRisk(age: number | null | undefined): number | BadData {
   }
 }
 
+//Combine Risks that are valid numbers and ignore bad data
 const combineRisks = (...risks: (number | BadData)[]): number => {
   return risks.reduce(
     (sum: number, risk) => (typeof risk === "number" ? sum + risk : sum),
@@ -220,7 +221,6 @@ const combineRisks = (...risks: (number | BadData)[]): number => {
 };
 
 async function main() {
-  //TODO: try looking at all of patients data before fixing
   let patients: Patient[] = await navigateApiPages(5);
 
   const high_risk_patients: string[] = [];
@@ -232,6 +232,7 @@ async function main() {
     return;
   }
 
+  //Iterate through patients and assess risks one at a time
   for (let i = 0; i < patients.length; i++) {
     const patient = patients[i];
     if (!patient) continue;
@@ -240,6 +241,7 @@ async function main() {
     let patientFeverRisk = assessFever(patient.temperature);
     let patientAgeRisk = assessAgeRisk(patient.age);
 
+    //Log bad data patients, but allow risk calculation to continue
     if (
       (patientBpRisk === "bad_data" ||
         patientFeverRisk === "bad_data" ||
@@ -255,6 +257,7 @@ async function main() {
       patientAgeRisk
     );
 
+    //Log high risk patients
     if (
       typeof patientRiskScore === "number" &&
       patientRiskScore >= 4 &&
@@ -263,6 +266,7 @@ async function main() {
       high_risk_patients.push(patient.patient_id);
     }
 
+    //Log fever patients
     if (
       (patientFeverRisk as number) >= FeverRisk.lowFever &&
       !fever_patients.includes(patient.patient_id)
@@ -271,6 +275,7 @@ async function main() {
     }
   }
 
+  //Logging for testing purposes
   console.log("Showing sorted patient data:");
   console.log(
     `High Risk Patients (${high_risk_patients.length}):`,
@@ -283,6 +288,7 @@ async function main() {
   );
   console.log("Total Patients Processed:", patients.length);
 
+  //Submit results via POST request
   console.log("Attempting to POST results...");
 
   const results = {
